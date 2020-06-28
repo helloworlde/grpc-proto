@@ -34,20 +34,27 @@ option java_package = "io.grpc.serviceconfig";
 option java_multiple_files = true;
 option java_outer_classname = "ServiceConfigProto";
 
+// 方法级别的配置
 // Configuration for a method.
 message MethodConfig {
+  // 需要配置的方法名称
   // The names of the methods to which this configuration applies.
   // - MethodConfig without names (empty list) will be skipped.
+  //   方法名称为空的将会被跳过
   // - Each name entry must be unique across the entire ServiceConfig.
+  //   在整个ServiceConfig中每个名称必须是唯一的
   // - If the 'method' field is empty, this MethodConfig specifies the defaults
   //   for all methods for the specified service.
+  //   如果方法名为空，这个 MethodConfig 会作用于所有的方法
   // - If the 'service' field is empty, the 'method' field must be empty, and
   //   this MethodConfig specifies the default for all methods (it's the default
   //   config).
+  //   如果 service属性是空的，method属性必须为空，这个 MethodConfig 作为所有的方法默认的配置
   //
   // When determining which MethodConfig to use for a given RPC, the most
   // specific match wins. For example, let's say that the service config
   // contains the following MethodConfig entries:
+  // 在决定给定的 RPC 使用哪个 MethodConfig 时，会使用最匹配的
   //
   // method_config { name { } ... }
   // method_config { name { service: "MyService" } ... }
@@ -57,9 +64,12 @@ message MethodConfig {
   // service and method name. MyService/Bar will use the second entry, because
   // it provides the default for all methods of MyService. AnotherService/Baz
   // will use the first entry, because it doesn't match the other two.
+  // MyService/Foo 会使用第三个配置，因为最匹配；MyService/Bar 使用第二个，提供了 MyService
+  // 所有方法的默认配置，AnotherService/Baz 会使用第一个配置，因为不匹配另外两个
   //
   // In JSON representation, value "", value `null`, and not present are the
   // same. The following are the same Name:
+  // "", null 和没有填写是相同的
   // - { "service": "s" }
   // - { "service": "s", "method": null }
   // - { "service": "s", "method": "" }
@@ -127,11 +137,13 @@ message MethodConfig {
   google.protobuf.UInt32Value max_response_message_bytes = 5;
 
   // The retry policy for outgoing RPCs.
+  // RPC 重试策略
   message RetryPolicy {
     // The maximum number of RPC attempts, including the original attempt.
     //
     // This field is required and must be greater than 1.
     // Any value greater than 5 will be treated as if it were 5.
+    // RPC最大重试次数，包含初始的重试，大于5的都会被作为5
     uint32 max_attempts = 1;
 
     // Exponential backoff parameters. The initial retry attempt will occur at
@@ -139,34 +151,49 @@ message MethodConfig {
     // random(0,
     //   min(initial_backoff*backoff_multiplier**(n-1), max_backoff)).
     // Required. Must be greater than zero.
+    // 指数补偿参数，初始重试会在 random(0, initial_backoff) 之间，通常情况下，第N个重试
+    // 会出现在 random(0,min(initial_backoff*backoff_multiplier**(n-1), max_backoff)).
+    // 必须参数，必须大于0
     google.protobuf.Duration initial_backoff = 2;
+
     // Required. Must be greater than zero.
+    // 必须参数，必须大于0
     google.protobuf.Duration max_backoff = 3;
-    float backoff_multiplier = 4;  // Required. Must be greater than zero.
+    // Required. Must be greater than zero.
+    float backoff_multiplier = 4;  
 
     // The set of status codes which may be retried.
     //
     // This field is required and must be non-empty.
+    // 需要重试的状态码，必须是非空的
     repeated google.rpc.Code retryable_status_codes = 5;
   }
 
+  // 对冲策略用于请求外部的 RPC，可能会在Server上执行多次，所以只有幂等的方法才可以使用对冲策略
   // The hedging policy for outgoing RPCs. Hedged RPCs may execute more than
   // once on the server, so only idempotent methods should specify a hedging
   // policy.
   message HedgingPolicy {
+    // 对冲策略最大尝试次数
     // The hedging policy will send up to max_requests RPCs.
+    // 这个 number 代表所有的重试次数，包括原始的请求
     // This number represents the total number of all attempts, including
     // the original attempt.
-    //
+    // 这个值是必填的且必须大于1，大于5的值将会被5代替
     // This field is required and must be greater than 1.
     // Any value greater than 5 will be treated as if it were 5.
     uint32 max_attempts = 1;
 
+    // 第一个 RPC请求将会被立即发送，但是 max_requests-1 个请求会在每一个对冲延时之后发送，
+    //  设置为0可以立即执行发送所有的请求
     // The first RPC will be sent immediately, but the max_requests-1 subsequent
     // hedged RPCs will be sent at intervals of every hedging_delay. Set this
     // to 0 to immediately send all max_requests RPCs.
     google.protobuf.Duration hedging_delay = 2;
 
+    // 定义状态码，表明请求是成功的，如果 server端返回的不是失败的状态码，对冲 RPC依然会继续，
+    // 除此之外，请求的 RPC将会被取消并返回给应用层错误
+    // 这个配置是可选的
     // The set of status codes which indicate other hedged RPCs may still
     // succeed. If a non-fatal status code is returned by the server, hedged
     // RPCs will continue. Otherwise, outstanding requests will be canceled and
@@ -176,6 +203,7 @@ message MethodConfig {
     repeated google.rpc.Code non_fatal_status_codes = 3;
   }
 
+  // 对冲或重试策略，只能配置一个，如果两个都配置了，则可能不会执行重试或者对冲
   // Only one of retry_policy or hedging_policy may be set. If neither is set,
   // RPCs will not be retried or hedged.
   oneof retry_or_hedging_policy {
@@ -406,10 +434,16 @@ message ServiceConfig {
   // Per-method configuration.
   repeated MethodConfig method_config = 2;
 
+  // 如果配置了重试限流策略，gRPC 会根据客户端失败的比例自动限流重试和对冲RPC请求
   // If a RetryThrottlingPolicy is provided, gRPC will automatically throttle
   // retry attempts and hedged RPCs when the client's ratio of failures to
   // successes exceeds a threshold.
-  //
+  // 
+  // 对于每一个服务名称，gRPC 客户端会维护一个 token_count，初始设置为 max_tokens，每个请求的
+  // RPC都会改变token_count的值(无论是服务调用或者方法调用)
+  //  - 每个失败的 RPC 会将 token_count 减一
+  //  - 每个成功的 RPC 会根据 token_ratio 比例将 token_count 加一
+  // 如果 token_count 小于等于  max_tokens / 2，则 RPC 的重试和对冲请求将不会发送
   // For each server name, the gRPC client will maintain a token_count which is
   // initially set to max_tokens. Every outgoing RPC (regardless of service or
   // method invoked) will change token_count as follows:
@@ -420,15 +454,17 @@ message ServiceConfig {
   // If token_count is less than or equal to max_tokens / 2, then RPCs will not
   // be retried and hedged RPCs will not be sent.
   message RetryThrottlingPolicy {
+    // token的初始数量等于 max_tokens，token_count 的值在 0 和 max_tokens 之间
     // The number of tokens starts at max_tokens. The token_count will always be
     // between 0 and max_tokens.
-    //
+    // 这个值是必须的，且大于0
     // This field is required and must be greater than zero.
     uint32 max_tokens = 1;
 
+    // 每个成功的请求增加token数量的值，通常会设置为 0-1 之间，如0.1
     // The amount of tokens to add on each successful RPC. Typically this will
     // be some number between 0 and 1, e.g., 0.1.
-    //
+    // 这个值是必须的，且必须大于0，支持小数点后三位
     // This field is required and must be greater than zero. Up to 3 decimal
     // places are supported.
     float token_ratio = 2;
